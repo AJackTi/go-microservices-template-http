@@ -1,3 +1,9 @@
 .idea
 
 ./broker-service/brokerApp
+
+./authentication-service/authApp
+
+./front-end/frontApp
+
+./project/db-data
