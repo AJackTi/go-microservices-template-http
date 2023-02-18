@@ -9,3 +9,5 @@
 ./project/db-data/
 
 ./front-end/frontApp
+
+./logger-service/loggerServiceApp
