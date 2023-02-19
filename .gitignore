@@ -11,3 +11,5 @@
 ./front-end/frontApp
 
 ./logger-service/loggerServiceApp
+
+./mail-service/mailerApp
