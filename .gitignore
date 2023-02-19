@@ -13,3 +13,5 @@
 ./logger-service/loggerServiceApp
 
 ./mail-service/mailerApp
+
+./listener-service/listenerApp
