@@ -15,7 +15,7 @@ type Mail struct {
 	Port        int
 	Username    string
 	Password    string
-	Encrytion   string
+	Encryption   string
 	FromAddress string
 	FromName    string
 }
@@ -59,7 +59,7 @@ func (m *Mail) SendSMTPMessage(msg Message) error {
 	server.Port = m.Port
 	server.Username = m.Username
 	server.Password = m.Password
-	server.Encryption = m.getEncryption(m.Encrytion)
+	server.Encryption = m.getEncryption(m.Encryption)
 	server.KeepAlive = false
 	server.ConnectTimeout = 10 * time.Second
 	server.SendTimeout = 10 * time.Second
