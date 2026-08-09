@@ -12,10 +12,7 @@ import (
 )
 
 func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
-	var requestPayload struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+	var requestPayload AuthenticationRequest
 
 	err := app.readJSON(w, r, &requestPayload)
 	if err != nil {
