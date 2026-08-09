@@ -1,0 +1,7 @@
+.git
+.gitignore
+frontApp
+web
+*.test
+coverage.out
+

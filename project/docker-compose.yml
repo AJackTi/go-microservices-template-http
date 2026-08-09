@@ -1,104 +1,214 @@
-version: '3'
+name: go-microservices-lab
 
 services:
   broker-service:
     build:
-      context: ./../broker-service
-      dockerfile: ./../broker-service/broker-service.dockerfile
-    restart: always
+      context: ../broker-service
+      dockerfile: broker-service.dockerfile
+    restart: unless-stopped
+    environment:
+      RABBIT_URL: amqp://${RABBITMQ_USER:-microservices}:${RABBITMQ_PASSWORD:-microservices}@rabbitmq-app:5672/
     ports:
-      - "8080:80"
-    deploy:
-      mode: replicated
-      replicas: 1
+      - "8080:8080"
+    depends_on:
+      authentication-service:
+        condition: service_healthy
+      logger-service-app:
+        condition: service_healthy
+      mailer-service:
+        condition: service_healthy
+      rabbitmq-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
+
+  front-end:
+    build:
+      context: ../front-end
+      dockerfile: front-end.dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    depends_on:
+      broker-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
+
+  authentication-service:
+    build:
+      context: ../authentication-service
+      dockerfile: authentication-service.dockerfile
+    restart: unless-stopped
+    environment:
+      DSN: host=postgres port=5432 user=${POSTGRES_USER:-microservices} password=${POSTGRES_PASSWORD:-microservices} dbname=${POSTGRES_DB:-users} sslmode=disable timezone=UTC connect_timeout=5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      logger-service-app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
 
   logger-service-app:
     build:
-      context: ./../logger-service
-      dockerfile: ./../logger-service/logger-service.dockerfile
-    restart: always
-    deploy:
-      mode: replicated
-      replicas: 1
+      context: ../logger-service
+      dockerfile: logger-service.dockerfile
+    restart: unless-stopped
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      MONGO_USERNAME: ${MONGO_USERNAME:-admin}
+      MONGO_PASSWORD: ${MONGO_PASSWORD:-microservices}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
 
   mailer-service:
     build:
-      context: ./../mail-service
-      dockerfile: ./../mail-service/mail-service.dockerfile
-    restart: always
-    deploy:
-      mode: replicated
-      replicas: 1
+      context: ../mail-service
+      dockerfile: mail-service.dockerfile
+    restart: unless-stopped
     environment:
       MAIL_DOMAIN: localhost
-      MAIL_HOST: mailhog
+      MAIL_HOST: mailpit
       MAIL_PORT: 1025
       MAIL_ENCRYPTION: none
       MAIL_USERNAME: ""
       MAIL_PASSWORD: ""
-      FROM_NAME: "John Smith"
-      FROM_ADDRESS: "john.smith@example.com"
-
-  authentication-service:
-    build:
-      context: ./../authentication-service
-      dockerfile: ./../authentication-service/authentication-service.dockerfile
-    restart: always
-    ports:
-      - "8081:80"
-    deploy:
-      mode: replicated
-      replicas: 1
-    environment:
-      DSN: "host=postgres port=5432 user=postgres password=password dbname=users sslmode=disable timezone=UTC connect_timeout=5"
+      FROM_NAME: ${FROM_NAME:-Microservices Lab}
+      FROM_ADDRESS: ${FROM_ADDRESS:-no-reply@example.test}
+    depends_on:
+      mailpit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
 
   listener-service:
     build:
-      context: ./../listener-service
-      dockerfile: ./../listener-service/listener-service.dockerfile
-    deploy:
-      mode: replicated
-      replicas: 1
-      
-  postgres:
-    image: 'postgres:14.0'
-    ports:
-      - "5432:5432"
-    restart: always
-    deploy:
-      mode: replicated
-      replicas: 1
+      context: ../listener-service
+      dockerfile: listener-service.dockerfile
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: users
+      RABBIT_URL: amqp://${RABBITMQ_USER:-microservices}:${RABBITMQ_PASSWORD:-microservices}@rabbitmq-app:5672/
+    depends_on:
+      rabbitmq-app:
+        condition: service_healthy
+      logger-service-app:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:18.4-alpine3.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-microservices}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-microservices}
+      POSTGRES_DB: ${POSTGRES_DB:-users}
     volumes:
-      - ./db-data/postgres:/var/lib/postgresql/data/
+      - postgres-data:/var/lib/postgresql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
 
   mongo:
-    image: 'mongo:4.2.16-bionic'
-    ports:
-      - "27017:27017"
+    # MongoDB 8.0.x cannot start on Linux 6.19 because of SERVER-121912.
+    # Keep the 7.0 line until an 8.x release containing the upstream fix ships.
+    image: mongo:7.0.39-jammy@sha256:04582c3a144d088f841c446abfc19f79adcefa8bd00ad4a7fb18e27b9585c5d6
+    restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: logs
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-microservices}
     volumes:
-      - ./db-data/mongo/:/data/db
+      - mongo-data:/data/db
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1",
+        ]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    networks:
+      - app-network
 
-  mailhog:
-    image: 'mailhog/mailhog:latest'
-    platform: linux/amd64
-    ports:
-      - "1025:1025"
-      - "8025:8025"
-  
   rabbitmq-app:
-    image: 'rabbitmq:3.9-alpine'
-    ports:
-      - "5672:5672"
-    deploy:
-      mode: replicated
-      replicas: 1
+    image: rabbitmq:4.3.4-management-alpine@sha256:44bf7eb50fe1765885659e49ccfdc775f8e531964d979321aee380a071f49f94
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-microservices}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-microservices}
     volumes:
-      - ./db-data/rabbitmq/:/var/lib/rabbitmq/
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    networks:
+      - app-network
+
+  mailpit:
+    image: axllent/mailpit:v1.30.7@sha256:d5ecbb067db3705fa953d79e1b7f81ef84038df67aba6c52825d8c02a1ea748a
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  mongo-data:
+  rabbitmq-data:

@@ -1,17 +1,31 @@
-.idea
+.DS_Store
+.idea/
+.vscode/
 
-./broker-service/brokerApp
+# Local configuration
+/.env
+/.env.local
 
-./authentication-service/authApp
+# Runtime data
+/project/db-data/
 
-./front-end/frontApp
+# Build artifacts
+/authentication-service/authApp
+/authentication-service/api
+/broker-service/brokerApp
+/broker-service/api
+/front-end/frontApp
+/front-end/web
+/listener-service/listenerApp
+/listener-service/listener
+/logger-service/loggerServiceApp
+/logger-service/api
+/mail-service/mailerApp
+/mail-service/api
+/bin/
+/dist/
 
-./project/db-data/
-
-./front-end/frontApp
-
-./logger-service/loggerServiceApp
-
-./mail-service/mailerApp
-
-./listener-service/listenerApp
+# Test and coverage output
+coverage.out
+coverage.html
+*.test

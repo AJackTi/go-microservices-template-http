@@ -1,0 +1,11 @@
+go 1.26.0
+
+use (
+	./authentication-service
+	./broker-service
+	./front-end
+	./listener-service
+	./logger-service
+	./mail-service
+)
+

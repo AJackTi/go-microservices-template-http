@@ -1,0 +1,7 @@
+.git
+.gitignore
+mailerApp
+api
+*.test
+coverage.out
+

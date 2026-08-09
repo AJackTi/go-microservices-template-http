@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -17,7 +18,6 @@ import (
 const (
 	webPort  = "80"
 	rpcPort  = "5001"
-	mongoURL = "mongodb://mongo:27017"
 	gRpcPort = "50001"
 )
 
@@ -90,11 +90,24 @@ func (app *Config) rpcListen() error {
 }
 
 func connectToMongo() (*mongo.Client, error) {
+	mongoURL := os.Getenv("MONGO_URL")
+	if mongoURL == "" {
+		mongoURL = "mongodb://mongo:27017"
+	}
+	mongoUsername := os.Getenv("MONGO_USERNAME")
+	if mongoUsername == "" {
+		mongoUsername = "admin"
+	}
+	mongoPassword := os.Getenv("MONGO_PASSWORD")
+	if mongoPassword == "" {
+		mongoPassword = "microservices"
+	}
+
 	// create connection options
 	clientOptions := options.Client().ApplyURI(mongoURL)
 	clientOptions.SetAuth(options.Credential{
-		Username: "admin",
-		Password: "password",
+		Username: mongoUsername,
+		Password: mongoPassword,
 	})
 
 	// connect
@@ -102,6 +115,13 @@ func connectToMongo() (*mongo.Client, error) {
 	if err != nil {
 		log.Println("Error connecting: ", err)
 		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err = c.Ping(ctx, nil); err != nil {
+		_ = c.Disconnect(context.Background())
+		return nil, fmt.Errorf("ping mongo: %w", err)
 	}
 
 	log.Println("Connected to mongo!")

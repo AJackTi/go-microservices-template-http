@@ -15,7 +15,7 @@ type Mail struct {
 	Port        int
 	Username    string
 	Password    string
-	Encryption   string
+	Encryption  string
 	FromAddress string
 	FromName    string
 }

@@ -1,0 +1,7 @@
+.git
+.gitignore
+loggerServiceApp
+api
+*.test
+coverage.out
+
