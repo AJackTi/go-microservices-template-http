@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -13,11 +14,15 @@ import (
 type Consumer struct {
 	conn      *amqp.Connection
 	queueName string
+	loggerURL string
+	client    *http.Client
 }
 
-func NewConsumer(conn *amqp.Connection) (*Consumer, error) {
+func NewConsumer(conn *amqp.Connection, loggerURL string, client *http.Client) (*Consumer, error) {
 	consumer := Consumer{
-		conn: conn,
+		conn:      conn,
+		loggerURL: loggerURL,
+		client:    client,
 	}
 
 	err := consumer.setup()
@@ -33,6 +38,7 @@ func (consumer *Consumer) setup() error {
 	if err != nil {
 		return err
 	}
+	defer channel.Close()
 
 	return declareExchange(channel)
 }
@@ -75,9 +81,12 @@ func (consumer *Consumer) Listen(topics []string) error {
 	go func() {
 		for d := range messages {
 			var payload Payload
-			_ = json.Unmarshal(d.Body, &payload)
+			if err := json.Unmarshal(d.Body, &payload); err != nil {
+				log.Println("error decoding RabbitMQ message:", err)
+				continue
+			}
 
-			go handlePayload(payload)
+			go consumer.handlePayload(payload)
 		}
 	}()
 
@@ -87,11 +96,11 @@ func (consumer *Consumer) Listen(topics []string) error {
 	return nil
 }
 
-func handlePayload(payload Payload) {
+func (consumer *Consumer) handlePayload(payload Payload) {
 	switch payload.Name {
 	case "log", "event":
 		// log whatever we get
-		err := logEvent(payload)
+		err := consumer.logEvent(payload)
 		if err != nil {
 			log.Println(err)
 		}
@@ -102,26 +111,30 @@ func handlePayload(payload Payload) {
 	// you can have as many cases as you want, as long as you write the logic
 
 	default:
-		err := logEvent(payload)
+		err := consumer.logEvent(payload)
 		if err != nil {
 			log.Println(err)
 		}
 	}
 }
 
-func logEvent(entry Payload) error {
-	jsonData, _ := json.MarshalIndent(entry, "", "\t")
+func (consumer *Consumer) logEvent(entry Payload) error {
+	jsonData, err := json.MarshalIndent(entry, "", "\t")
+	if err != nil {
+		return err
+	}
 
-	logServiceURL := "http://logger-service-app/log"
-
-	request, err := http.NewRequest("POST", logServiceURL, bytes.NewBuffer(jsonData))
+	request, err := http.NewRequest("POST", consumer.loggerURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}
 
 	request.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
+	client := consumer.client
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
 
 	response, err := client.Do(request)
 	if err != nil {
@@ -130,7 +143,7 @@ func logEvent(entry Payload) error {
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusAccepted {
-		return err
+		return fmt.Errorf("unexpected status from logger service: %s", response.Status)
 	}
 
 	return nil

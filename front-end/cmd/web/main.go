@@ -6,18 +6,29 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		render(w, "test.page.gohtml")
 	})
 
 	fmt.Println("Starting front end service on port 8081")
 
-	err := http.ListenAndServe(":8081", nil)
+	srv := &http.Server{
+		Addr:              ":8081",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	err := srv.ListenAndServe()
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 }
 

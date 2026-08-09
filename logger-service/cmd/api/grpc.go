@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log-service/data"
@@ -18,6 +19,9 @@ type LogServer struct {
 
 func (l *LogServer) WriteLog(ctx context.Context, req *logs.LogRequest) (*logs.LogResponse, error) {
 	input := req.GetLogEntry()
+	if input == nil {
+		return &logs.LogResponse{Result: "failed"}, errors.New("log entry is required")
+	}
 
 	// write the log
 	logEntry := data.LogEntry{

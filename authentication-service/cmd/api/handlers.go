@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
@@ -23,20 +25,25 @@ func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
 	// validate the user against the database
 	user, err := app.Models.User.GetByEmail(requestPayload.Email)
 	if err != nil {
-		app.errorJSON(w, errors.New("invalid credentials"), http.StatusBadRequest)
+		app.errorJSON(w, errors.New("invalid credentials"), http.StatusUnauthorized)
 		return
 	}
 
 	valid, err := user.PasswordMatches(requestPayload.Password)
 	if err != nil || !valid {
-		app.errorJSON(w, errors.New("invalid credentials"), http.StatusBadRequest)
+		app.errorJSON(w, errors.New("invalid credentials"), http.StatusUnauthorized)
+		return
+	}
+
+	if user.Active != 1 {
+		app.errorJSON(w, errors.New("account is inactive"), http.StatusUnauthorized)
 		return
 	}
 
 	// log authentication
-	err = app.logRequest("authentication", fmt.Sprintf("%s logged in", user.Email))
+	err = app.logRequest(r.Context(), "authentication", fmt.Sprintf("%s logged in", user.Email))
 	if err != nil {
-		app.errorJSON(w, err)
+		app.errorJSON(w, err, http.StatusServiceUnavailable)
 		return
 	}
 
@@ -46,10 +53,10 @@ func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
 		Data:    user,
 	}
 
-	app.writeJSON(w, http.StatusAccepted, payload)
+	app.writeJSON(w, http.StatusOK, payload)
 }
 
-func (app *Config) logRequest(name, data string) error {
+func (app *Config) logRequest(ctx context.Context, name, data string) error {
 	var entry struct {
 		Name string `json:"name"`
 		Data string `json:"data"`
@@ -58,18 +65,30 @@ func (app *Config) logRequest(name, data string) error {
 	entry.Name = name
 	entry.Data = data
 
-	jsonData, _ := json.MarshalIndent(entry, "", "\t")
-	logServiceURL := "http://logger-service-app/log"
-
-	request, err := http.NewRequest("POST", logServiceURL, bytes.NewBuffer(jsonData))
+	jsonData, err := json.MarshalIndent(entry, "", "\t")
 	if err != nil {
 		return err
 	}
 
-	client := &http.Client{}
-	_, err = client.Do(request)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, app.LoggerURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+
+	client := app.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("unexpected status from logger service: %s", response.Status)
 	}
 
 	return nil

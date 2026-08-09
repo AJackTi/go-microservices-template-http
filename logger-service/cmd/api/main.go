@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 const (
@@ -31,18 +31,16 @@ func main() {
 	// connect to mongo
 	mongoClient, err := connectToMongo()
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 	client = mongoClient
 
-	// create a context in order to disconnect
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
 	// close connection
 	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		if err = client.Disconnect(ctx); err != nil {
-			panic(err)
+			log.Fatal(err)
 		}
 	}()
 
@@ -52,6 +50,9 @@ func main() {
 
 	// Register the RPC Server
 	err = rpc.Register(new(RPCServer))
+	if err != nil {
+		log.Fatal(err)
+	}
 	go app.rpcListen()
 
 	go app.gRPCListen()
@@ -59,13 +60,17 @@ func main() {
 	// start web server
 	log.Println("Starting service on port", webPort)
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", webPort),
-		Handler: app.routes(),
+		Addr:              fmt.Sprintf(":%s", webPort),
+		Handler:           app.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	err = srv.ListenAndServe()
 	if err != nil {
-		log.Panic(err)
+		log.Fatal(err)
 	}
 }
 
@@ -111,14 +116,15 @@ func connectToMongo() (*mongo.Client, error) {
 	})
 
 	// connect
-	c, err := mongo.Connect(context.TODO(), clientOptions)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, err := mongo.Connect(clientOptions)
 	if err != nil {
 		log.Println("Error connecting: ", err)
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if err = c.Ping(ctx, nil); err != nil {
 		_ = c.Disconnect(context.Background())
 		return nil, fmt.Errorf("ping mongo: %w", err)

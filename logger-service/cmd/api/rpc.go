@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"log-service/data"
+	"strings"
 	"time"
 )
 
@@ -20,11 +22,18 @@ type RPCPayload struct {
 
 // LogInfo writes our payload to mongo
 func (r *RPCServer) LogInfo(payload RPCPayload, resp *string) error {
+	if strings.TrimSpace(payload.Name) == "" || strings.TrimSpace(payload.Data) == "" {
+		return errors.New("name and data are required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	collection := client.Database("logs").Collection("logs")
-	_, err := collection.InsertOne(context.TODO(), data.LogEntry{
+	_, err := collection.InsertOne(ctx, data.LogEntry{
 		Name:      payload.Name,
 		Data:      payload.Data,
-		CreatedAt: time.Now(),
+		CreatedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		log.Println("error writing to mongo", err)

@@ -5,6 +5,7 @@ import (
 	"listener/event"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"time"
 
@@ -20,19 +21,22 @@ func main() {
 	}
 	defer rabbitConn.Close()
 
+	loggerURL := envOrDefault("LOGGER_URL", "http://logger-service-app/log")
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
 	// start listening for messages
 	log.Println("Listening for and consuming RabbitMQ messages...")
 
 	// create consumer
-	consumer, err := event.NewConsumer(rabbitConn)
+	consumer, err := event.NewConsumer(rabbitConn, loggerURL, httpClient)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	// watch the queue and consume events
 	err = consumer.Listen([]string{"log.INFO", "log.WARNING", "log.ERROR"})
 	if err != nil {
-		log.Println(err)
+		log.Fatal(err)
 	}
 
 }
@@ -70,4 +74,13 @@ func connect() (*amqp.Connection, error) {
 	}
 
 	return connection, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }

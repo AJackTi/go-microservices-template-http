@@ -79,6 +79,10 @@ func (u *User) GetAll() ([]*User, error) {
 		users = append(users, &user)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return users, nil
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -14,7 +15,13 @@ import (
 const webPort = "8080"
 
 type Config struct {
-	Rabbit *amqp.Connection
+	Rabbit     *amqp.Connection
+	HTTPClient *http.Client
+	AuthURL    string
+	LoggerURL  string
+	MailURL    string
+	RPCAddr    string
+	GRPCAddr   string
 }
 
 func main() {
@@ -26,20 +33,32 @@ func main() {
 	}
 	defer rabbitConn.Close()
 
-	app := Config{Rabbit: rabbitConn}
+	app := Config{
+		Rabbit:     rabbitConn,
+		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		AuthURL:    envOrDefault("AUTH_URL", "http://authentication-service/authenticate"),
+		LoggerURL:  envOrDefault("LOGGER_URL", "http://logger-service-app/log"),
+		MailURL:    envOrDefault("MAIL_URL", "http://mailer-service/send"),
+		RPCAddr:    envOrDefault("RPC_ADDR", "logger-service-app:5001"),
+		GRPCAddr:   envOrDefault("GRPC_ADDR", "logger-service-app:50001"),
+	}
 
 	log.Printf("Starting broker service on port %s\n", webPort)
 
 	// define http server
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", webPort),
-		Handler: app.routes(),
+		Addr:              fmt.Sprintf(":%s", webPort),
+		Handler:           app.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// start the server
 	err = srv.ListenAndServe()
-	if err != nil {
-		log.Panic(err)
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
 	}
 }
 
@@ -76,4 +95,13 @@ func connect() (*amqp.Connection, error) {
 	}
 
 	return connection, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }

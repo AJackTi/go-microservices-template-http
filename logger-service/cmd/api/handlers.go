@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"log-service/data"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -14,7 +16,15 @@ type JSONPayload struct {
 func (app *Config) WriteLog(w http.ResponseWriter, r *http.Request) {
 	// read json into var
 	var requestPayload JSONPayload
-	_ = app.readJSON(w, r, &requestPayload)
+	if err := app.readJSON(w, r, &requestPayload); err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	if strings.TrimSpace(requestPayload.Name) == "" || strings.TrimSpace(requestPayload.Data) == "" {
+		app.errorJSON(w, errors.New("name and data are required"))
+		return
+	}
 
 	// insert data
 	event := data.LogEntry{

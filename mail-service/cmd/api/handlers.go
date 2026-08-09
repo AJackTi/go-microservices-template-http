@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func (app *Config) SendMail(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +25,11 @@ func (app *Config) SendMail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.TrimSpace(requestPayload.To) == "" || strings.TrimSpace(requestPayload.Subject) == "" || strings.TrimSpace(requestPayload.Message) == "" {
+		app.errorJSON(w, errors.New("to, subject, and message are required"))
+		return
+	}
+
 	msg := Message{
 		From:    requestPayload.From,
 		To:      requestPayload.To,
@@ -33,7 +40,7 @@ func (app *Config) SendMail(w http.ResponseWriter, r *http.Request) {
 	err = app.Mailer.SendSMTPMessage(msg)
 	if err != nil {
 		log.Println(err)
-		app.errorJSON(w, err)
+		app.errorJSON(w, err, http.StatusBadGateway)
 		return
 	}
 

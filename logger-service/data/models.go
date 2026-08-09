@@ -6,10 +6,9 @@ import (
 	"log"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 var client *mongo.Client
@@ -35,9 +34,12 @@ type LogEntry struct {
 }
 
 func (l *LogEntry) Insert(entry *LogEntry) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	collection := client.Database("logs").Collection("logs")
 
-	_, err := collection.InsertOne(context.TODO(), LogEntry{
+	_, err := collection.InsertOne(ctx, LogEntry{
 		Name:      entry.Name,
 		Data:      entry.Data,
 		CreatedAt: entry.CreatedAt,
@@ -60,7 +62,7 @@ func (l *LogEntry) All() ([]*LogEntry, error) {
 	opts := options.Find()
 	opts.SetSort(bson.D{{Key: "created_at", Value: -1}})
 
-	cursor, err := collection.Find(context.TODO(), bson.D{}, opts)
+	cursor, err := collection.Find(ctx, bson.D{}, opts)
 	if err != nil {
 		log.Println("Finding all docs error: ", err)
 		return nil, err
@@ -80,6 +82,10 @@ func (l *LogEntry) All() ([]*LogEntry, error) {
 		logs = append(logs, &item)
 	}
 
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+
 	return logs, nil
 }
 
@@ -89,7 +95,7 @@ func (l *LogEntry) GetOne(id string) (*LogEntry, error) {
 
 	collection := client.Database("logs").Collection("logs")
 
-	docID, err := primitive.ObjectIDFromHex(id)
+	docID, err := bson.ObjectIDFromHex(id)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +128,7 @@ func (l *LogEntry) Update() (*mongo.UpdateResult, error) {
 
 	collection := client.Database("logs").Collection("logs")
 
-	docID, err := primitive.ObjectIDFromHex(l.ID)
+	docID, err := bson.ObjectIDFromHex(l.ID)
 	if err != nil {
 		return nil, err
 	}
