@@ -53,6 +53,9 @@ development.
     make dev
     make smoke
     make verify-phase-1
+    make verify-phase-4
+    make verify-phase-5
+    make verify-phase-6
     make logs
     make down
     make clean
@@ -73,6 +76,13 @@ The current roadmap is:
 
 See [docs/observability-and-protocols.md](docs/observability-and-protocols.md)
 for the phase 5 tracing and protocol comparison notes.
+
+Phase 6 docs:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [SECURITY.md](SECURITY.md)
+- [docs/template-usage.md](docs/template-usage.md)
+- [docs/release-process.md](docs/release-process.md)
 
 ## Attribution
 

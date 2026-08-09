@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: broker-service
+            context: broker-service
+            dockerfile: broker-service.dockerfile
+          - service: authentication-service
+            context: authentication-service
+            dockerfile: authentication-service.dockerfile
+          - service: front-end
+            context: front-end
+            dockerfile: front-end.dockerfile
+          - service: listener-service
+            context: listener-service
+            dockerfile: listener-service.dockerfile
+          - service: logger-service-app
+            context: logger-service
+            dockerfile: logger-service.dockerfile
+          - service: mailer-service
+            context: mail-service
+            dockerfile: mail-service.dockerfile
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set image namespace
+        run: echo "IMAGE_NAMESPACE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.context }}
+          file: ./${{ matrix.context }}/${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+
+      - uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image digest
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.service }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
+

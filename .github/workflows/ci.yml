@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  local:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache: true
+
+      - name: Install local tooling
+        run: sudo apt-get update && sudo apt-get install -y jq ripgrep
+
+      - name: Verify local code
+        run: make verify-local
+
+  phase1:
+    runs-on: ubuntu-24.04
+    needs: local
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.5"
+          cache: true
+
+      - name: Install local tooling
+        run: sudo apt-get update && sudo apt-get install -y jq ripgrep
+
+      - name: Verify phase 1
+        run: make verify-phase-1
+

@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /authentication-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /broker-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /front-end
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /listener-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /logger-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /mail-service
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

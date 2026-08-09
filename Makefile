@@ -9,7 +9,7 @@ GO_FILES := $(shell rg --files -g '*.go')
 .DEFAULT_GOAL := help
 
 .PHONY: help doctor fmt fmt-check tidy tidy-check test vet build config dev demo smoke \
-	logs ps down clean verify-local verify-phase-1 verify-phase-4 verify-phase-5
+	logs ps down clean verify-local verify-phase-1 verify-phase-4 verify-phase-5 verify-phase-6
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "Go Microservices Communication Lab\n\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -77,3 +77,6 @@ verify-phase-4: ## Verify reliable RabbitMQ delivery after a logger outage
 
 verify-phase-5: ## Verify tracing and protocol failure injection
 	@./scripts/verify-phase-5.sh
+
+verify-phase-6: ## Verify workflow YAML and release/documentation ergonomics
+	@./scripts/verify-phase-6.sh
