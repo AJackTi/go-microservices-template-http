@@ -13,17 +13,19 @@ import (
 )
 
 type Consumer struct {
-	conn      *amqp.Connection
-	queueName string
-	loggerURL string
-	client    *http.Client
+	conn         *amqp.Connection
+	queueName    string
+	loggerURL    string
+	client       *http.Client
+	retryBackoff time.Duration
 }
 
 func NewConsumer(conn *amqp.Connection, loggerURL string, client *http.Client) (*Consumer, error) {
 	consumer := Consumer{
-		conn:      conn,
-		loggerURL: loggerURL,
-		client:    client,
+		conn:         conn,
+		loggerURL:    loggerURL,
+		client:       client,
+		retryBackoff: 250 * time.Millisecond,
 	}
 
 	err := consumer.setup()
@@ -56,6 +58,10 @@ func (consumer *Consumer) Listen(ctx context.Context, topics []string) error {
 	}
 	defer ch.Close()
 
+	if err := ch.Qos(1, 0, false); err != nil {
+		return err
+	}
+
 	q, err := declareRandomQueue(ch)
 	if err != nil {
 		return err
@@ -74,7 +80,7 @@ func (consumer *Consumer) Listen(ctx context.Context, topics []string) error {
 	}
 
 	consumerTag := "listener-service"
-	messages, err := ch.Consume(q.Name, consumerTag, true, false, false, false, nil)
+	messages, err := ch.Consume(q.Name, consumerTag, false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
@@ -96,17 +102,39 @@ func (consumer *Consumer) Listen(ctx context.Context, topics []string) error {
 				return fmt.Errorf("rabbitmq consumer closed unexpectedly")
 			}
 
-			var payload Payload
-			if err := json.Unmarshal(d.Body, &payload); err != nil {
-				log.Println("error decoding RabbitMQ message:", err)
-				continue
-			}
-
-			if err := consumer.handlePayload(ctx, payload); err != nil {
+			if err := consumer.handleDelivery(ctx, d); err != nil {
 				log.Println(err)
 			}
 		}
 	}
+}
+
+func (consumer *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	var payload Payload
+	if err := json.Unmarshal(delivery.Body, &payload); err != nil {
+		if rejectErr := delivery.Reject(false); rejectErr != nil {
+			return fmt.Errorf("reject malformed RabbitMQ delivery: %w", rejectErr)
+		}
+		return fmt.Errorf("decode RabbitMQ message: %w", err)
+	}
+
+	if err := consumer.handlePayload(ctx, payload); err != nil {
+		if nackErr := delivery.Nack(false, true); nackErr != nil {
+			return fmt.Errorf("nack RabbitMQ delivery: %w", nackErr)
+		}
+
+		if retryErr := consumer.waitBeforeRetry(ctx); retryErr != nil {
+			return retryErr
+		}
+
+		return err
+	}
+
+	if ackErr := delivery.Ack(false); ackErr != nil {
+		return fmt.Errorf("ack RabbitMQ delivery: %w", ackErr)
+	}
+
+	return nil
 }
 
 func (consumer *Consumer) handlePayload(ctx context.Context, payload Payload) error {
@@ -158,4 +186,20 @@ func (consumer *Consumer) logEvent(ctx context.Context, entry Payload) error {
 	}
 
 	return nil
+}
+
+func (consumer *Consumer) waitBeforeRetry(ctx context.Context) error {
+	if consumer.retryBackoff <= 0 {
+		return nil
+	}
+
+	timer := time.NewTimer(consumer.retryBackoff)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
