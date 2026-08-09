@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -42,6 +43,43 @@ type LogPayload struct {
 	Data string `json:"data"`
 }
 
+func validateAuthPayload(payload AuthPayload) error {
+	if strings.TrimSpace(payload.Email) == "" || strings.TrimSpace(payload.Password) == "" {
+		return errors.New("email and password are required")
+	}
+
+	return nil
+}
+
+func validateLogPayload(payload LogPayload) error {
+	if strings.TrimSpace(payload.Name) == "" || strings.TrimSpace(payload.Data) == "" {
+		return errors.New("name and data are required")
+	}
+
+	return nil
+}
+
+func validateMailPayload(payload MailPayload) error {
+	if strings.TrimSpace(payload.To) == "" || strings.TrimSpace(payload.Subject) == "" || strings.TrimSpace(payload.Message) == "" {
+		return errors.New("to, subject, and message are required")
+	}
+
+	return nil
+}
+
+func (p RequestPayload) validate() error {
+	switch p.Action {
+	case "auth":
+		return validateAuthPayload(p.Auth)
+	case "log", "log-via-rpc", "log-event":
+		return validateLogPayload(p.Log)
+	case "mail":
+		return validateMailPayload(p.Mail)
+	default:
+		return errors.New("unknown action")
+	}
+}
+
 func (app *Config) Broker(w http.ResponseWriter, r *http.Request) {
 	payload := jsonResponse{
 		Error:   false,
@@ -60,6 +98,11 @@ func (app *Config) HandleSubmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := requestPayload.validate(); err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
 	ctx := r.Context()
 
 	switch requestPayload.Action {
@@ -73,13 +116,10 @@ func (app *Config) HandleSubmission(w http.ResponseWriter, r *http.Request) {
 		app.sendMail(ctx, w, requestPayload.Mail)
 
 	case "log-via-rpc":
-		app.logItemViaRPC(w, requestPayload.Log)
+		app.logItemViaRPC(ctx, w, requestPayload.Log)
 
 	case "log-event":
 		app.logEventViaRabbit(w, requestPayload.Log)
-
-	default:
-		app.errorJSON(w, errors.New("unknown action"))
 	}
 }
 
@@ -256,12 +296,22 @@ type RPCPayload struct {
 	Data string
 }
 
-func (app *Config) logItemViaRPC(w http.ResponseWriter, l LogPayload) {
-	conn, err := net.DialTimeout("tcp", app.RPCAddr, 3*time.Second)
+func (app *Config) logItemViaRPC(ctx context.Context, w http.ResponseWriter, l LogPayload) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", app.RPCAddr)
 	if err != nil {
 		app.errorJSON(w, err)
 		return
 	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+
 	client := rpc.NewClient(conn)
 	defer client.Close()
 
@@ -290,6 +340,11 @@ func (app *Config) LogViaGRPC(w http.ResponseWriter, r *http.Request) {
 
 	err := app.readJSON(w, r, &requestPayload)
 	if err != nil {
+		app.errorJSON(w, err)
+		return
+	}
+
+	if err := validateLogPayload(requestPayload.Log); err != nil {
 		app.errorJSON(w, err)
 		return
 	}

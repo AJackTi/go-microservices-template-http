@@ -2,6 +2,7 @@ package event
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -48,7 +49,7 @@ type Payload struct {
 	Data string `json:"data"`
 }
 
-func (consumer *Consumer) Listen(topics []string) error {
+func (consumer *Consumer) Listen(ctx context.Context, topics []string) error {
 	ch, err := consumer.conn.Channel()
 	if err != nil {
 		return err
@@ -72,59 +73,69 @@ func (consumer *Consumer) Listen(topics []string) error {
 		}
 	}
 
-	messages, err := ch.Consume(q.Name, "", true, false, false, false, nil)
+	consumerTag := "listener-service"
+	messages, err := ch.Consume(q.Name, consumerTag, true, false, false, false, nil)
 	if err != nil {
 		return err
 	}
 
-	forever := make(chan bool)
-	go func() {
-		for d := range messages {
+	fmt.Printf("Waiting for message [Exchange, Queue] [logs_topic, %s]\n", q.Name)
+
+	for {
+		select {
+		case <-ctx.Done():
+			if err := ch.Cancel(consumerTag, false); err != nil {
+				log.Println("error cancelling RabbitMQ consumer:", err)
+			}
+			return nil
+		case d, ok := <-messages:
+			if !ok {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("rabbitmq consumer closed unexpectedly")
+			}
+
 			var payload Payload
 			if err := json.Unmarshal(d.Body, &payload); err != nil {
 				log.Println("error decoding RabbitMQ message:", err)
 				continue
 			}
 
-			go consumer.handlePayload(payload)
-		}
-	}()
-
-	fmt.Printf("Waiting for message [Exchange, Queue] [logs_topic, %s]\n", q.Name)
-	<-forever
-
-	return nil
-}
-
-func (consumer *Consumer) handlePayload(payload Payload) {
-	switch payload.Name {
-	case "log", "event":
-		// log whatever we get
-		err := consumer.logEvent(payload)
-		if err != nil {
-			log.Println(err)
-		}
-
-	case "auth":
-		// authenticate
-
-	// you can have as many cases as you want, as long as you write the logic
-
-	default:
-		err := consumer.logEvent(payload)
-		if err != nil {
-			log.Println(err)
+			if err := consumer.handlePayload(ctx, payload); err != nil {
+				log.Println(err)
+			}
 		}
 	}
 }
 
-func (consumer *Consumer) logEvent(entry Payload) error {
+func (consumer *Consumer) handlePayload(ctx context.Context, payload Payload) error {
+	switch payload.Name {
+	case "log", "event":
+		// log whatever we get
+		return consumer.logEvent(ctx, payload)
+
+	case "auth":
+		// authenticate
+		return nil
+
+	// you can have as many cases as you want, as long as you write the logic
+
+	default:
+		return consumer.logEvent(ctx, payload)
+	}
+}
+
+func (consumer *Consumer) logEvent(ctx context.Context, entry Payload) error {
 	jsonData, err := json.MarshalIndent(entry, "", "\t")
 	if err != nil {
 		return err
 	}
 
-	request, err := http.NewRequest("POST", consumer.loggerURL, bytes.NewBuffer(jsonData))
+	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, consumer.loggerURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return err
 	}

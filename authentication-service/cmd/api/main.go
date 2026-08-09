@@ -9,6 +9,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgconn"
@@ -18,13 +20,15 @@ import (
 
 const webPort = "80"
 
-var counts int64
-
 type Config struct {
 	DB         *sql.DB
-	Models     data.Models
+	Models     userStore
 	HTTPClient *http.Client
 	LoggerURL  string
+}
+
+type userStore interface {
+	GetByEmail(email string) (*data.User, error)
 }
 
 func main() {
@@ -36,15 +40,23 @@ func main() {
 		log.Fatal("DSN must be set")
 	}
 
-	conn, err := connectToDB(dsn)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	conn, err := connectToDB(ctx, dsn)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Fatal(err)
 	}
+
+	models := data.New(conn)
 
 	// set up config
 	app := Config{
 		DB:         conn,
-		Models:     data.New(conn),
+		Models:     &models.User,
 		HTTPClient: &http.Client{Timeout: 10 * time.Second},
 		LoggerURL:  envOrDefault("LOGGER_URL", "http://logger-service-app/log"),
 	}
@@ -58,22 +70,22 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	err = srv.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+	err = runHTTPServer(ctx, srv)
+	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func openDB(dsn string) (*sql.DB, error) {
+func openDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	err = db.PingContext(ctx)
+	err = db.PingContext(pingCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +93,16 @@ func openDB(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func connectToDB(dsn string) (*sql.DB, error) {
+func connectToDB(ctx context.Context, dsn string) (*sql.DB, error) {
 	var counts int
 	for {
-		connection, err := openDB(dsn)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		connection, err := openDB(ctx, dsn)
 		if err != nil {
 			log.Println("Postgres not yet ready ...")
 			counts++
@@ -92,7 +110,13 @@ func connectToDB(dsn string) (*sql.DB, error) {
 				return nil, fmt.Errorf("connect to postgres: %w", err)
 			}
 			log.Println("Backing off for two seconds...")
-			time.Sleep(2 * time.Second)
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 			continue
 		}
 
@@ -108,4 +132,32 @@ func envOrDefault(key, fallback string) string {
 	}
 
 	return value
+}
+
+func runHTTPServer(ctx context.Context, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+
+		err := <-errCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }

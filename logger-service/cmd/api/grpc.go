@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"log-service/data"
 	"log-service/logs"
 	"net"
+	"time"
 
 	"google.golang.org/grpc"
 )
@@ -40,19 +40,32 @@ func (l *LogServer) WriteLog(ctx context.Context, req *logs.LogRequest) (*logs.L
 	return res, nil
 }
 
-func (app *Config) gRPCListen() {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", gRpcPort))
-	if err != nil {
-		log.Fatalf("Failed to listen for gRPC: %v", err)
-	}
-
-	s := grpc.NewServer()
-
-	logs.RegisterLogServiceServer(s, &LogServer{Models: app.Models})
-
+func (app *Config) gRPCListen(ctx context.Context, listener net.Listener, server *grpc.Server) error {
 	log.Printf("gRPC Server started on port %s", gRpcPort)
 
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("Failed to listen for gRPC: %v", err)
+	go func() {
+		<-ctx.Done()
+		done := make(chan struct{})
+		go func() {
+			server.GracefulStop()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			server.Stop()
+		}
+
+		_ = listener.Close()
+	}()
+
+	if err := server.Serve(listener); err != nil {
+		if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
 	}
+
+	return nil
 }

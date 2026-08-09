@@ -1,21 +1,32 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"listener/event"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// try to connect to rabbitmq
-	rabbitConn, err := connect()
+	rabbitConn, err := connect(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Println(err)
 		os.Exit(1)
 	}
@@ -34,25 +45,36 @@ func main() {
 	}
 
 	// watch the queue and consume events
-	err = consumer.Listen([]string{"log.INFO", "log.WARNING", "log.ERROR"})
+	err = consumer.Listen(ctx, []string{"log.INFO", "log.WARNING", "log.ERROR"})
 	if err != nil {
 		log.Fatal(err)
 	}
 
 }
 
-func connect() (*amqp.Connection, error) {
+func connect(ctx context.Context) (*amqp.Connection, error) {
 	var counts int64
 	var backOff = 1 * time.Second
 	var connection *amqp.Connection
 	rabbitURL := os.Getenv("RABBIT_URL")
 	if rabbitURL == "" {
-		rabbitURL = "amqp://guest:guest@rabbitmq-app"
+		return nil, fmt.Errorf("RABBIT_URL must be set")
 	}
 
 	// don't continue until rabbit is ready
+	dialer := net.Dialer{Timeout: 5 * time.Second}
 	for {
-		c, err := amqp.Dial(rabbitURL)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		c, err := amqp.DialConfig(rabbitURL, amqp.Config{
+			Dial: func(network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, network, addr)
+			},
+		})
 		if err != nil {
 			fmt.Println("RabbitMQ not yet ready...")
 			counts++
@@ -69,8 +91,14 @@ func connect() (*amqp.Connection, error) {
 
 		backOff = time.Duration(math.Pow(float64(counts), 2)) * time.Second
 		log.Println("backing off...")
-		time.Sleep(backOff)
-		continue
+		timer := time.NewTimer(backOff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+			continue
+		}
 	}
 
 	return connection, nil

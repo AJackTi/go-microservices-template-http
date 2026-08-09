@@ -2,17 +2,23 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log-service/data"
+	"log-service/logs"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -28,9 +34,15 @@ type Config struct {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// connect to mongo
-	mongoClient, err := connectToMongo()
+	mongoClient, err := connectToMongo(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Fatal(err)
 	}
 	client = mongoClient
@@ -48,14 +60,23 @@ func main() {
 		Models: *data.New(client),
 	}
 
-	// Register the RPC Server
-	err = rpc.Register(new(RPCServer))
+	rpcServer := rpc.NewServer()
+	if err = rpcServer.Register(new(RPCServer)); err != nil {
+		log.Fatal(err)
+	}
+
+	rpcListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%s", rpcPort))
 	if err != nil {
 		log.Fatal(err)
 	}
-	go app.rpcListen()
 
-	go app.gRPCListen()
+	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%s", gRpcPort))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	grpcServer := grpc.NewServer()
+	logs.RegisterLogServiceServer(grpcServer, &LogServer{Models: app.Models})
 
 	// start web server
 	log.Println("Starting service on port", webPort)
@@ -68,44 +89,104 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	err = srv.ListenAndServe()
-	if err != nil {
+	var wg sync.WaitGroup
+	errCh := make(chan error, 3)
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if err := runHTTPServer(ctx, srv); err != nil {
+			errCh <- err
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if err := app.rpcListen(ctx, rpcListener, rpcServer); err != nil {
+			errCh <- err
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		if err := app.gRPCListen(ctx, grpcListener, grpcServer); err != nil {
+			errCh <- err
+		}
+	}()
+
+	select {
+	case err := <-errCh:
+		stop()
+		wg.Wait()
 		log.Fatal(err)
+	case <-ctx.Done():
+		stop()
+		wg.Wait()
 	}
 }
 
-func (app *Config) rpcListen() error {
-	log.Println("Starting RPC server on port", rpcPort)
-	listen, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%s", rpcPort))
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-	defer listen.Close()
+func runHTTPServer(ctx context.Context, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
 
-	for {
-		rpcConn, err := listen.Accept()
-		if err != nil {
-			log.Println(err)
-			continue
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
 		}
 
-		go rpc.ServeConn(rpcConn)
+		err := <-errCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }
 
-func connectToMongo() (*mongo.Client, error) {
+func (app *Config) rpcListen(ctx context.Context, listener net.Listener, server *rpc.Server) error {
+	log.Println("Starting RPC server on port", rpcPort)
+	defer listener.Close()
+
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
+	for {
+		rpcConn, err := listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}
+
+		go server.ServeConn(rpcConn)
+	}
+}
+
+func connectToMongo(ctx context.Context) (*mongo.Client, error) {
 	mongoURL := os.Getenv("MONGO_URL")
 	if mongoURL == "" {
 		mongoURL = "mongodb://mongo:27017"
 	}
 	mongoUsername := os.Getenv("MONGO_USERNAME")
 	if mongoUsername == "" {
-		mongoUsername = "admin"
+		return nil, errors.New("MONGO_USERNAME must be set")
 	}
 	mongoPassword := os.Getenv("MONGO_PASSWORD")
 	if mongoPassword == "" {
-		mongoPassword = "microservices"
+		return nil, errors.New("MONGO_PASSWORD must be set")
 	}
 
 	// create connection options
@@ -116,7 +197,7 @@ func connectToMongo() (*mongo.Client, error) {
 	})
 
 	// connect
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	c, err := mongo.Connect(clientOptions)
@@ -125,7 +206,7 @@ func connectToMongo() (*mongo.Client, error) {
 		return nil, err
 	}
 
-	if err = c.Ping(ctx, nil); err != nil {
+	if err = c.Ping(pingCtx, nil); err != nil {
 		_ = c.Disconnect(context.Background())
 		return nil, fmt.Errorf("ping mongo: %w", err)
 	}

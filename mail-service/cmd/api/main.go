@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -18,6 +21,9 @@ type Config struct {
 const webPort = "80"
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	mailer, err := createMail()
 	if err != nil {
 		log.Fatal(err)
@@ -38,7 +44,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	err = srv.ListenAndServe()
+	err = runHTTPServer(ctx, srv)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,4 +79,32 @@ func createMail() (Mail, error) {
 	}
 
 	return m, nil
+}
+
+func runHTTPServer(ctx context.Context, srv *http.Server) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+
+		err := <-errCh
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }

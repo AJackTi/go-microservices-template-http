@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,8 +23,14 @@ func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.TrimSpace(requestPayload.Email) == "" || strings.TrimSpace(requestPayload.Password) == "" {
+		app.errorJSON(w, errors.New("email and password are required"), http.StatusBadRequest)
+		return
+	}
+
 	// validate the user against the database
-	user, err := app.Models.User.GetByEmail(requestPayload.Email)
+	email := strings.TrimSpace(requestPayload.Email)
+	user, err := app.Models.GetByEmail(email)
 	if err != nil {
 		app.errorJSON(w, errors.New("invalid credentials"), http.StatusUnauthorized)
 		return
