@@ -8,7 +8,6 @@ import (
 	"log"
 	"math"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,6 +19,18 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTelemetry, err := setupTelemetry("listener-service")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Println("error shutting down telemetry:", err)
+		}
+	}()
 
 	// try to connect to rabbitmq
 	rabbitConn, err := connect(ctx)
@@ -33,7 +44,7 @@ func main() {
 	defer rabbitConn.Close()
 
 	loggerURL := envOrDefault("LOGGER_URL", "http://logger-service-app/log")
-	httpClient := &http.Client{Timeout: 10 * time.Second}
+	httpClient := newObservedHTTPClient()
 
 	// start listening for messages
 	log.Println("Listening for and consuming RabbitMQ messages...")

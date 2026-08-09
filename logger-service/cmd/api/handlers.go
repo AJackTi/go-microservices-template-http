@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log-service/data"
 	"net/http"
 	"strings"
@@ -18,6 +19,11 @@ func (app *Config) WriteLog(w http.ResponseWriter, r *http.Request) {
 
 	if strings.TrimSpace(requestPayload.Name) == "" || strings.TrimSpace(requestPayload.Data) == "" {
 		app.errorJSON(w, errors.New("name and data are required"))
+		return
+	}
+
+	if shouldFailRequest("http", requestPayload.Name+" "+requestPayload.Data) {
+		app.errorJSON(w, fmt.Errorf("forced failure for http"), http.StatusServiceUnavailable)
 		return
 	}
 

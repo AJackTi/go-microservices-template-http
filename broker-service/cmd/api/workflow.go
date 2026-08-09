@@ -14,6 +14,10 @@ import (
 	"net/rpc"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -254,8 +258,18 @@ func (w *SubmissionWorkflow) LogViaRabbit(ctx context.Context, input LogInput) (
 		return SubmissionResult{}, err
 	}
 
+	ctx, span := otel.Tracer("broker-service").Start(ctx, "broker.rabbitmq.publish")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("messaging.system", "rabbitmq"),
+		attribute.String("messaging.destination", "logs_topic"),
+		attribute.String("messaging.operation", "publish"),
+	)
+
 	emitter, err := event.NewEventEmitter(w.Rabbit)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return SubmissionResult{}, downstreamError(err)
 	}
 
@@ -266,12 +280,20 @@ func (w *SubmissionWorkflow) LogViaRabbit(ctx context.Context, input LogInput) (
 
 	j, err := json.MarshalIndent(&payload, "", "\t")
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return SubmissionResult{}, err
 	}
 
-	if err := emitter.Push(string(j), "log.INFO"); err != nil {
+	headers := event.InjectTraceContext(ctx, amqp.Table{})
+
+	if err := emitter.Push(ctx, string(j), "log.INFO", headers); err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return SubmissionResult{}, downstreamError(err)
 	}
+
+	span.SetStatus(otelcodes.Ok, "")
 
 	return SubmissionResult{
 		Status: http.StatusAccepted,
@@ -286,6 +308,13 @@ func (w *SubmissionWorkflow) LogViaRPC(ctx context.Context, input LogInput) (Sub
 	if err := validateLogInput(input); err != nil {
 		return SubmissionResult{}, err
 	}
+
+	ctx, span := otel.Tracer("broker-service").Start(ctx, "broker.rpc.call")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("rpc.system", "net/rpc"),
+		attribute.String("server.address", w.RPCAddr),
+	)
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -304,18 +333,20 @@ func (w *SubmissionWorkflow) LogViaRPC(ctx context.Context, input LogInput) (Sub
 	client := rpc.NewClient(conn)
 	defer client.Close()
 
-	rpcPayload := struct {
-		Name string
-		Data string
-	}{
+	rpcPayload := rpcTracePayload{
 		Name: input.Name,
 		Data: input.Data,
 	}
+	injectRPCTraceContext(ctx, &rpcPayload)
 
 	var result string
 	if err := client.Call("RPCServer.LogInfo", rpcPayload, &result); err != nil {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return SubmissionResult{}, downstreamError(err)
 	}
+
+	span.SetStatus(otelcodes.Ok, "")
 
 	return SubmissionResult{
 		Status: http.StatusAccepted,
@@ -336,7 +367,8 @@ func (w *SubmissionWorkflow) LogViaGRPC(ctx context.Context, input LogInput) (Su
 
 	conn, err := grpc.DialContext(ctx, w.GRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock())
+		grpc.WithBlock(),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return SubmissionResult{}, downstreamError(err)
 	}

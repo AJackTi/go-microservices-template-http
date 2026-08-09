@@ -16,6 +16,7 @@ import (
 	_ "github.com/jackc/pgconn"
 	_ "github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const webPort = "80"
@@ -43,6 +44,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTelemetry, err := setupTelemetry("authentication-service")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Println("error shutting down telemetry:", err)
+		}
+	}()
+
 	conn, err := connectToDB(ctx, dsn)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -57,13 +70,13 @@ func main() {
 	app := Config{
 		DB:         conn,
 		Models:     &models.User,
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: newObservedHTTPClient(),
 		LoggerURL:  envOrDefault("LOGGER_URL", "http://logger-service-app/log"),
 	}
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", webPort),
-		Handler:           app.routes(),
+		Handler:           otelhttp.NewHandler(app.routes(), "authentication-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

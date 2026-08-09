@@ -18,6 +18,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 )
 
@@ -36,6 +38,18 @@ type Config struct {
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTelemetry, err := setupTelemetry("logger-service")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Println("error shutting down telemetry:", err)
+		}
+	}()
 
 	// connect to mongo
 	mongoClient, err := connectToMongo(ctx)
@@ -75,14 +89,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	logs.RegisterLogServiceServer(grpcServer, &LogServer{Models: app.Models})
 
 	// start web server
 	log.Println("Starting service on port", webPort)
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", webPort),
-		Handler:           app.routes(),
+		Handler:           otelhttp.NewHandler(app.routes(), "logger-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

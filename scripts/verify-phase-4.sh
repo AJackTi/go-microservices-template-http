@@ -3,6 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_NAME="go-microservices-phase4"
+BROKER_HOST_PORT="${BROKER_HOST_PORT:-28080}"
+MAILPIT_HOST_PORT="${MAILPIT_HOST_PORT:-28025}"
+export BROKER_HOST_PORT MAILPIT_HOST_PORT
+export BROKER_URL="http://127.0.0.1:${BROKER_HOST_PORT}"
+export MAILPIT_URL="http://127.0.0.1:${MAILPIT_HOST_PORT}"
 
 if [[ "${1:-}" == "--project" ]]; then
   PROJECT_NAME="${2:?missing project name}"
@@ -10,8 +15,8 @@ if [[ "${1:-}" == "--project" ]]; then
 fi
 
 COMPOSE=(docker compose --project-name "$PROJECT_NAME" -f "$ROOT_DIR/project/docker-compose.yml")
-BROKER_URL="${BROKER_URL:-http://127.0.0.1:8080}"
-MAILPIT_URL="${MAILPIT_URL:-http://127.0.0.1:8025}"
+BROKER_URL="${BROKER_URL:-http://127.0.0.1:${BROKER_HOST_PORT}}"
+MAILPIT_URL="${MAILPIT_URL:-http://127.0.0.1:${MAILPIT_HOST_PORT}}"
 RUN_ID="phase4-$(date +%s)-$$"
 
 log() {

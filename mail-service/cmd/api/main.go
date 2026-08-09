@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 type Config struct {
@@ -23,6 +25,18 @@ const webPort = "80"
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTelemetry, err := setupTelemetry("mail-service")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Println("error shutting down telemetry:", err)
+		}
+	}()
 
 	mailer, err := createMail()
 	if err != nil {
@@ -37,7 +51,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", webPort),
-		Handler:           app.routes(),
+		Handler:           otelhttp.NewHandler(app.routes(), "mail-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

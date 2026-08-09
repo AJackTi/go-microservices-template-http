@@ -3,6 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_NAME="go-microservices-phase1"
+BROKER_HOST_PORT="${BROKER_HOST_PORT:-18080}"
+FRONTEND_HOST_PORT="${FRONTEND_HOST_PORT:-18081}"
+MAILPIT_HOST_PORT="${MAILPIT_HOST_PORT:-18025}"
+export BROKER_HOST_PORT FRONTEND_HOST_PORT MAILPIT_HOST_PORT
+export BROKER_URL="http://127.0.0.1:${BROKER_HOST_PORT}"
+export FRONTEND_URL="http://127.0.0.1:${FRONTEND_HOST_PORT}"
+export MAILPIT_URL="http://127.0.0.1:${MAILPIT_HOST_PORT}"
 
 if [[ "${1:-}" == "--project" ]]; then
   PROJECT_NAME="${2:?missing project name}"

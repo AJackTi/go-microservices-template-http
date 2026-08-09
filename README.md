@@ -71,8 +71,10 @@ The current roadmap is:
 5. OpenTelemetry, protocol comparison, and failure injection
 6. CI/CD, signed releases, community documentation, and template ergonomics
 
+See [docs/observability-and-protocols.md](docs/observability-and-protocols.md)
+for the phase 5 tracing and protocol comparison notes.
+
 ## Attribution
 
 See [UPSTREAM.md](UPSTREAM.md). The project is distributed under the
 [MIT License](LICENSE.md).
-

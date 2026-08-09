@@ -21,7 +21,7 @@ func (e *Emitter) setup() error {
 	return declareExchange(channel)
 }
 
-func (e *Emitter) Push(event string, severity string) error {
+func (e *Emitter) Push(ctx context.Context, event string, severity string, headers amqp.Table) error {
 	channel, err := e.connection.Channel()
 	if err != nil {
 		return err
@@ -32,7 +32,7 @@ func (e *Emitter) Push(event string, severity string) error {
 	log.Println("Push to channel")
 
 	err = channel.PublishWithContext(
-		context.Background(),
+		ctx,
 		"logs_topic",
 		severity,
 		false,
@@ -40,6 +40,7 @@ func (e *Emitter) Push(event string, severity string) error {
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(event),
+			Headers:     headers,
 		},
 	)
 	if err != nil {

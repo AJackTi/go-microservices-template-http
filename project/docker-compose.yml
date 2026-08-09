@@ -9,7 +9,7 @@ services:
     environment:
       RABBIT_URL: amqp://${RABBITMQ_USER:-microservices}:${RABBITMQ_PASSWORD:-microservices}@rabbitmq-app:5672/
     ports:
-      - "8080:8080"
+      - "${BROKER_HOST_PORT:-8080}:8080"
     depends_on:
       authentication-service:
         condition: service_healthy
@@ -34,7 +34,7 @@ services:
       dockerfile: front-end.dockerfile
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "${FRONTEND_HOST_PORT:-8081}:8081"
     depends_on:
       broker-service:
         condition: service_healthy
@@ -194,7 +194,7 @@ services:
     image: axllent/mailpit:v1.30.7@sha256:d5ecbb067db3705fa953d79e1b7f81ef84038df67aba6c52825d8c02a1ea748a
     restart: unless-stopped
     ports:
-      - "8025:8025"
+      - "${MAILPIT_HOST_PORT:-8025}:8025"
     healthcheck:
       test: ["CMD", "/mailpit", "readyz"]
       interval: 5s

@@ -10,6 +10,9 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 )
 
 type Consumer struct {
@@ -110,30 +113,53 @@ func (consumer *Consumer) Listen(ctx context.Context, topics []string) error {
 }
 
 func (consumer *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) error {
+	ctx = extractTraceContext(ctx, delivery.Headers)
+	ctx, span := otel.Tracer("listener-service").Start(ctx, "listener.rabbitmq.consume")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("messaging.system", "rabbitmq"),
+		attribute.String("messaging.destination", delivery.Exchange),
+		attribute.String("messaging.rabbitmq.routing_key", delivery.RoutingKey),
+		attribute.Bool("messaging.rabbitmq.redelivered", delivery.Redelivered),
+	)
+
 	var payload Payload
 	if err := json.Unmarshal(delivery.Body, &payload); err != nil {
 		if rejectErr := delivery.Reject(false); rejectErr != nil {
+			span.RecordError(rejectErr)
+			span.SetStatus(otelcodes.Error, rejectErr.Error())
 			return fmt.Errorf("reject malformed RabbitMQ delivery: %w", rejectErr)
 		}
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return fmt.Errorf("decode RabbitMQ message: %w", err)
 	}
 
 	if err := consumer.handlePayload(ctx, payload); err != nil {
 		if nackErr := delivery.Nack(false, true); nackErr != nil {
+			span.RecordError(nackErr)
+			span.SetStatus(otelcodes.Error, nackErr.Error())
 			return fmt.Errorf("nack RabbitMQ delivery: %w", nackErr)
 		}
 
 		if retryErr := consumer.waitBeforeRetry(ctx); retryErr != nil {
+			span.RecordError(retryErr)
+			span.SetStatus(otelcodes.Error, retryErr.Error())
 			return retryErr
 		}
 
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
 		return err
 	}
 
 	if ackErr := delivery.Ack(false); ackErr != nil {
+		span.RecordError(ackErr)
+		span.SetStatus(otelcodes.Error, ackErr.Error())
 		return fmt.Errorf("ack RabbitMQ delivery: %w", ackErr)
 	}
 
+	span.SetStatus(otelcodes.Ok, "")
 	return nil
 }
 

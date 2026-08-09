@@ -14,6 +14,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const webPort = "8080"
@@ -32,6 +33,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	shutdownTelemetry, err := setupTelemetry("broker-service")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(shutdownCtx); err != nil {
+			log.Println("error shutting down telemetry:", err)
+		}
+	}()
+
 	// try to connect to rabbitmq
 	rabbitConn, err := connect(ctx)
 	if err != nil {
@@ -45,7 +58,7 @@ func main() {
 
 	app := Config{
 		Rabbit:     rabbitConn,
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: newObservedHTTPClient(),
 		AuthURL:    envOrDefault("AUTH_URL", "http://authentication-service/authenticate"),
 		LoggerURL:  envOrDefault("LOGGER_URL", "http://logger-service-app/log"),
 		MailURL:    envOrDefault("MAIL_URL", "http://mailer-service/send"),
@@ -58,7 +71,7 @@ func main() {
 	// define http server
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", webPort),
-		Handler:           app.routes(),
+		Handler:           otelhttp.NewHandler(app.routes(), "broker-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
