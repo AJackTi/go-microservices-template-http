@@ -3,7 +3,7 @@ module mailer-service
 go 1.25.0
 
 require (
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2
 	github.com/vanng822/go-premailer v1.35.0
 	github.com/xhit/go-simple-mail/v2 v2.16.0
