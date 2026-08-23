@@ -3,7 +3,7 @@ module broker
 go 1.25.0
 
 require (
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2
 	github.com/rabbitmq/amqp091-go v1.13.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.70.0
