@@ -8,7 +8,7 @@ require (
 	github.com/vanng822/go-premailer v1.35.0
 	github.com/xhit/go-simple-mail/v2 v2.16.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0
-	go.opentelemetry.io/otel v1.45.0
+	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 )
@@ -37,8 +37,8 @@ require (
 	github.com/toorop/go-dkim v0.0.0-20201103131630-e1cd1a0a5208 // indirect
 	github.com/vanng822/css v1.0.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel/metric v1.45.0 // indirect
-	go.opentelemetry.io/otel/trace v1.45.0 // indirect
+	go.opentelemetry.io/otel/metric v1.46.0 // indirect
+	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )
